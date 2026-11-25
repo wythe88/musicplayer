@@ -33,6 +33,12 @@ public partial class MainWindow : Window
         RenamePlaylistDialog(playlist);
     }
 
+    private void RenamePlaylist_Click(object sender, RoutedEventArgs e)
+    {
+        if (PlaylistList.SelectedItem is PlaylistModel playlist)
+            RenamePlaylistDialog(playlist);
+    }
+
     private void RenamePlaylistDialog(PlaylistModel playlist)
     {
         var dialog = new TextEntryWindow("重命名播放列表", playlist.Name) { Owner = this };
@@ -116,7 +122,7 @@ public partial class MainWindow : Window
     {
         var media = GetContextMedia(sender);
         if (media is null || !File.Exists(media.FullPath)) return;
-        Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\\\"{media.FullPath}\\\"") { UseShellExecute = true });
+        Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\\"{media.FullPath}\\"") { UseShellExecute = true });
     }
 
     private void CopyMedia_Click(object sender, RoutedEventArgs e) => _copiedMedia = GetContextMedia(sender);
