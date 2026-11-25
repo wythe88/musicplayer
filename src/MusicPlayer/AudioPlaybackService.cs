@@ -12,12 +12,23 @@ public sealed class AudioPlaybackService : IDisposable
     private Process? _decoder;
     private WaveOutEvent? _output;
     private ProcessPcmProvider? _provider;
+    private EventHandler<StoppedEventArgs>? _outputStoppedHandler;
     private TimeSpan _seekOffset;
+    private float _volume = 1f;
     private bool _disposed;
 
     public event EventHandler? PlaybackStopped;
     public bool IsPlaying => _output?.PlaybackState == PlaybackState.Playing;
-    public float Volume { get => _output?.Volume ?? 1f; set { if (_output is not null) _output.Volume = Math.Clamp(value, 0f, 1f); } }
+    public bool IsPaused => _output?.PlaybackState == PlaybackState.Paused;
+    public float Volume
+    {
+        get => _volume;
+        set
+        {
+            _volume = Math.Clamp(value, 0f, 1f);
+            if (_output is not null) _output.Volume = _volume;
+        }
+    }
     public TimeSpan Position => _seekOffset + (_provider?.Position ?? TimeSpan.Zero);
 
     public void Play(string path, TimeSpan startAt, TimeSpan? duration = null)
@@ -27,8 +38,9 @@ public sealed class AudioPlaybackService : IDisposable
         var start = startAt < TimeSpan.Zero ? TimeSpan.Zero : startAt;
         var process = StartFfmpeg(ffmpeg, path, start, duration);
         var provider = new ProcessPcmProvider(process.StandardOutput.BaseStream, _waveFormat);
-        var output = new WaveOutEvent { DesiredLatency = 120, NumberOfBuffers = 3 };
-        output.PlaybackStopped += (_, _) => PlaybackStopped?.Invoke(this, EventArgs.Empty);
+        var output = new WaveOutEvent { DesiredLatency = 120, NumberOfBuffers = 3, Volume = _volume };
+        _outputStoppedHandler = (_, _) => PlaybackStopped?.Invoke(this, EventArgs.Empty);
+        output.PlaybackStopped += _outputStoppedHandler;
         output.Init(provider);
 
         _decoder = process;
@@ -40,11 +52,13 @@ public sealed class AudioPlaybackService : IDisposable
     }
 
     public void Pause() => _output?.Pause();
-
     public void Resume() => _output?.Play();
 
     public void Stop()
     {
+        if (_output is not null && _outputStoppedHandler is not null)
+            _output.PlaybackStopped -= _outputStoppedHandler;
+        _outputStoppedHandler = null;
         try { _output?.Stop(); } catch { }
         _output?.Dispose();
         _output = null;
@@ -62,13 +76,100 @@ public sealed class AudioPlaybackService : IDisposable
     public async Task<double[]> BuildWaveformAsync(string path, int maxBars = 2400, CancellationToken cancellationToken = default)
     {
         var ffmpeg = FindTool("ffmpeg.exe", "ffmpeg");
-        var startInfo = new ProcessStartInfo(ffmpeg)
+        var info = new ProcessStartInfo(ffmpeg)
         {
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true
         };
+        foreach (var arg in new[] { "-hide_banner", "-loglevel", "error", "-i", path, "-vn", "-map", "0:a:0",
+                     "-ac", "1", "-ar", "1000", "-f", "s16le", "pipe:1" })
+            info.ArgumentList.Add(arg);
+
+        using var process = Process.Start(info) ?? throw new InvalidOperationException("无法启动 FFmpeg。");
+        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        var peaks = new List<double>(Math.Min(maxBars, 2400));
+        var buffer = new byte[64 * 1024];
+        const int samplesPerBar = 100;
+        var peak = 0.0;
+        var samples = 0;
+        while (true)
+        {
+            var read = await process.StandardOutput.BaseStream.ReadAsync(buffer, cancellationToken);
+            if (read <= 0) break;
+            for (var i = 0; i + 1 < read; i += 2)
+            {
+                var sample = Math.Abs((short)(buffer[i] | buffer[i + 1] << 8)) / 32768.0;
+                if (sample > peak) peak = sample;
+                if (++samples >= samplesPerBar)
+                {
+                    peaks.Add(peak);
+                    peak = 0;
+                    samples = 0;
+                }
+            }
+        }
+        if (samples > 0) peaks.Add(peak);
+        await process.WaitForExitAsync(cancellationToken);
+        var error = await stderrTask;
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(error) ? "无法读取该文件的音频轨道。" : error.Trim());
+
+        if (peaks.Count > maxBars)
+        {
+            var reduced = new double[maxBars];
+            for (var i = 0; i < maxBars; i++)
+            {
+                var from = (int)((long)i * peaks.Count / maxBars);
+                var to = Math.Max(from + 1, (int)((long)(i + 1) * peaks.Count / maxBars));
+                reduced[i] = peaks.Skip(from).Take(to - from).Max();
+            }
+            return Normalize(reduced);
+        }
+        return Normalize(peaks.ToArray());
+    }
+
+    public static async Task<TimeSpan> GetDurationAsync(string path, CancellationToken cancellationToken = default)
+    {
+        var ffprobe = FindTool("ffprobe.exe", "ffprobe");
+        var info = new ProcessStartInfo(ffprobe)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        foreach (var arg in new[] { "-v", "error", "-show_entries", "format=duration",
+                     "-of", "default=noprint_wrappers=1:nokey=1", path })
+            info.ArgumentList.Add(arg);
+
+        using var process = Process.Start(info) ?? throw new InvalidOperationException("无法启动 FFprobe。");
+        var outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        await process.WaitForExitAsync(cancellationToken);
+        var output = await outputTask;
+        var error = await errorTask;
+        if (process.ExitCode != 0 || !double.TryParse(output.Trim(), NumberStyles.Float,
+                CultureInfo.InvariantCulture, out var seconds) || !double.IsFinite(seconds))
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(error) ? "无法读取媒体时长。" : error.Trim());
+        return TimeSpan.FromSeconds(Math.Max(0, seconds));
+    }
+
+    private static Process StartFfmpeg(string executable, string path, TimeSpan startAt, TimeSpan? duration)
+    {
+        var info = new ProcessStartInfo(executable)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        if (startAt > TimeSpan.Zero)
+        {
+            info.ArgumentList.Add("-ss");
+            info.ArgumentList.Add(startAt.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture));
+        }
         foreach (var arg in new[] { "-hide_banner", "-loglevel", "error", "-i", path })
             info.ArgumentList.Add(arg);
         if (duration is { } clipDuration && clipDuration > TimeSpan.Zero)
@@ -116,6 +217,7 @@ public sealed class AudioPlaybackService : IDisposable
         private long _bytesRead;
         public WaveFormat WaveFormat { get; } = waveFormat;
         public TimeSpan Position => TimeSpan.FromSeconds((double)Interlocked.Read(ref _bytesRead) / WaveFormat.AverageBytesPerSecond);
+
         public int Read(byte[] buffer, int offset, int count)
         {
             var read = stream.Read(buffer, offset, count);
