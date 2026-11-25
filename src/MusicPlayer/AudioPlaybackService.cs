@@ -68,92 +68,15 @@ public sealed class AudioPlaybackService : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true
         };
-        foreach (var arg in new[] { "-hide_banner", "-loglevel", "error", "-i", path, "-vn", "-map", "0:a:0",
-                     "-ac", "1", "-ar", "1000", "-f", "s16le", "pipe:1" })
-            startInfo.ArgumentList.Add(arg);
-
-        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("无法启动 FFmpeg。");
-        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
-        var peaks = new List<double>(Math.Min(maxBars, 2400));
-        var buffer = new byte[64 * 1024];
-        const int samplesPerBar = 100;
-        var peak = 0.0;
-        var samples = 0;
-        while (true)
+        foreach (var arg in new[] { "-hide_banner", "-loglevel", "error", "-i", path })
+            info.ArgumentList.Add(arg);
+        if (duration is { } clipDuration && clipDuration > TimeSpan.Zero)
         {
-            var read = await process.StandardOutput.BaseStream.ReadAsync(buffer, cancellationToken);
-            if (read <= 0) break;
-            for (var i = 0; i + 1 < read; i += 2)
-            {
-                var sample = Math.Abs((short)(buffer[i] | buffer[i + 1] << 8)) / 32768.0;
-                if (sample > peak) peak = sample;
-                if (++samples >= samplesPerBar)
-                {
-                    peaks.Add(peak);
-                    peak = 0;
-                    samples = 0;
-                }
-            }
+            info.ArgumentList.Add("-t");
+            info.ArgumentList.Add(clipDuration.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture));
         }
-        if (samples > 0) peaks.Add(peak);
-        await process.WaitForExitAsync(cancellationToken);
-        var error = await stderrTask;
-        if (process.ExitCode != 0)
-            throw new InvalidOperationException(string.IsNullOrWhiteSpace(error) ? "无法读取该文件的音频轨道。" : error.Trim());
-
-        if (peaks.Count > maxBars)
-        {
-            var reduced = new double[maxBars];
-            for (var i = 0; i < maxBars; i++)
-            {
-                var from = (int)((long)i * peaks.Count / maxBars);
-                var to = Math.Max(from + 1, (int)((long)(i + 1) * peaks.Count / maxBars));
-                reduced[i] = peaks.Skip(from).Take(to - from).Max();
-            }
-            return Normalize(reduced);
-        }
-        return Normalize(peaks.ToArray());
-    }
-
-    public static async Task<TimeSpan> GetDurationAsync(string path, CancellationToken cancellationToken = default)
-    {
-        var ffprobe = FindTool("ffprobe.exe", "ffprobe");
-        var startInfo = new ProcessStartInfo(ffprobe)
-        {
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        };
-        foreach (var arg in new[] { "-v", "error", "-show_entries", "format=duration",
-                     "-of", "default=noprint_wrappers=1:nokey=1", path })
-            startInfo.ArgumentList.Add(arg);
-        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("无法启动 FFprobe。");
-        var output = await process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var error = await process.StandardError.ReadToEndAsync(cancellationToken);
-        await process.WaitForExitAsync(cancellationToken);
-        if (process.ExitCode != 0 || !double.TryParse(output.Trim(), NumberStyles.Float,
-                CultureInfo.InvariantCulture, out var seconds) || !double.IsFinite(seconds))
-            throw new InvalidOperationException(string.IsNullOrWhiteSpace(error) ? "无法读取媒体时长。" : error.Trim());
-        return TimeSpan.FromSeconds(Math.Max(0, seconds));
-    }
-
-    private static Process StartFfmpeg(string executable, string path, TimeSpan startAt, TimeSpan? duration)
-    {
-        var info = new ProcessStartInfo(executable)
-        {
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        };
-        if (startAt > TimeSpan.Zero)
-        {
-            info.ArgumentList.Add("-ss");
-            info.ArgumentList.Add(startAt.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture));
-        }
-        foreach (var arg in new[] { "-hide_banner", "-loglevel", "error", "-i", path, "-vn", "-map", "0:a:0",
-                     "-ac", "2", "-ar", SampleRate.ToString(CultureInfo.InvariantCulture),
+        foreach (var arg in new[] { "-vn", "-map", "0:a:0", "-ac", "2",
+                     "-ar", SampleRate.ToString(CultureInfo.InvariantCulture),
                      "-acodec", "pcm_s16le", "-f", "s16le", "pipe:1" })
             info.ArgumentList.Add(arg);
         return Process.Start(info) ?? throw new InvalidOperationException("无法启动 FFmpeg。");
