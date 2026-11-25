@@ -58,12 +58,12 @@ jobs:
           retention-days: 14
 
       - name: Publish GitHub Release
-        if: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.head_commit.message == 'release: create v0.1.0') }}
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v0.1.0' }}
+          tag_name: v0.1.0
           target_commitish: main
-          name: MusicPlayer ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v0.1.0' }}
+          name: MusicPlayer v0.1.0
           generate_release_notes: true
           prerelease: true
           files: MusicPlayer-win-x64.zip
