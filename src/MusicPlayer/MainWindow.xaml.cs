@@ -122,7 +122,7 @@ public partial class MainWindow : Window
     {
         var media = GetContextMedia(sender);
         if (media is null || !File.Exists(media.FullPath)) return;
-        Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\\"{media.FullPath}\\"") { UseShellExecute = true });
+        Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{media.FullPath}\"") { UseShellExecute = true });
     }
 
     private void CopyMedia_Click(object sender, RoutedEventArgs e) => _copiedMedia = GetContextMedia(sender);
