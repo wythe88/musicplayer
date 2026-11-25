@@ -16,14 +16,15 @@ public sealed class AudioPlaybackService : IDisposable
 
     public event EventHandler? PlaybackStopped;
     public bool IsPlaying => _output?.PlaybackState == PlaybackState.Playing;
+    public float Volume { get => _output?.Volume ?? 1f; set { if (_output is not null) _output.Volume = Math.Clamp(value, 0f, 1f); } }
     public TimeSpan Position => _seekOffset + (_provider?.Position ?? TimeSpan.Zero);
 
-    public void Play(string path, TimeSpan startAt)
+    public void Play(string path, TimeSpan startAt, TimeSpan? duration = null)
     {
         Stop();
         var ffmpeg = FindTool("ffmpeg.exe", "ffmpeg");
         var start = startAt < TimeSpan.Zero ? TimeSpan.Zero : startAt;
-        var process = StartFfmpeg(ffmpeg, path, start);
+        var process = StartFfmpeg(ffmpeg, path, start, duration);
         var provider = new ProcessPcmProvider(process.StandardOutput.BaseStream, _waveFormat);
         var output = new WaveOutEvent { DesiredLatency = 120, NumberOfBuffers = 3 };
         output.PlaybackStopped += (_, _) => PlaybackStopped?.Invoke(this, EventArgs.Empty);
@@ -137,7 +138,7 @@ public sealed class AudioPlaybackService : IDisposable
         return TimeSpan.FromSeconds(Math.Max(0, seconds));
     }
 
-    private static Process StartFfmpeg(string executable, string path, TimeSpan startAt)
+    private static Process StartFfmpeg(string executable, string path, TimeSpan startAt, TimeSpan? duration)
     {
         var info = new ProcessStartInfo(executable)
         {
