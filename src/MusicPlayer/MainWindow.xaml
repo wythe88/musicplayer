@@ -66,7 +66,13 @@
                         <TextBlock Text="播放列表" FontSize="16" FontWeight="SemiBold" Margin="4,2,4,12"/>
                         <ListBox x:Name="PlaylistList" SelectionChanged="PlaylistList_SelectionChanged"
                                  Background="Transparent" BorderThickness="0"
-                                 Foreground="{StaticResource PrimaryText}" DisplayMemberPath="Name"/>
+                                 Foreground="{StaticResource PrimaryText}" DisplayMemberPath="Name">
+                            <ListBox.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="重命名播放列表" Click="RenamePlaylist_Click"/>
+                                </ContextMenu>
+                            </ListBox.ContextMenu>
+                        </ListBox>
                     </StackPanel>
                 </DockPanel>
             </Border>
@@ -124,11 +130,11 @@
             </Border>
         </Grid>
 
-        <DockPanel Grid.Row="3" Margin="0,10,2,0" LastChildFill="False">
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,2,0">
             <TextBlock Text="媒体卡片大小" Foreground="{StaticResource MutedText}" VerticalAlignment="Center"/>
             <Slider x:Name="CardZoomSlider" Width="170" Minimum="0" Maximum="100" Value="50"
                     ValueChanged="CardZoomSlider_ValueChanged" Margin="10,0" VerticalAlignment="Center"/>
             <TextBlock x:Name="ZoomValueText" Text="100%" Foreground="{StaticResource MutedText}" VerticalAlignment="Center"/>
-        </DockPanel>
+        </StackPanel>
     </Grid>
 </Window>
