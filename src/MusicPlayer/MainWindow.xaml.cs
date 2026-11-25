@@ -250,7 +250,10 @@ public partial class MainWindow : Window
             DrawWaveform();
 
             var position = startAt ?? TimeSpan.FromSeconds(media.TrimStartSeconds);
-            _audio.Play(media.FullPath, position);
+            var clipEnd = media.TrimEndSeconds > 0 ? media.TrimEndSeconds : media.DurationSeconds;
+            TimeSpan? clipDuration = clipEnd > position.TotalSeconds
+                ? TimeSpan.FromSeconds(clipEnd - position.TotalSeconds) : null;
+            _audio.Play(media.FullPath, position, clipDuration);
             _positionTimer.Start();
             PlaybackStatusText.Text = "正在播放";
             _ = LoadWaveformAsync(media, _waveformCancellation.Token);
