@@ -1,20 +1,66 @@
-name: Windows build
+name: Windows build and release
 
 on:
   push:
     branches: [ main ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Set up .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-      - name: Build WPF application
+
+      - name: Restore and build
         run: dotnet build ./src/MusicPlayer/MusicPlayer.csproj --configuration Release
+
+      - name: Publish self-contained Windows application
+        run: dotnet publish ./src/MusicPlayer/MusicPlayer.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=false --output ./publish
+
+      - name: Download FFmpeg LGPL build
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "ffmpeg.zip"
+          Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-win64-lgpl.zip" -OutFile $archive
+          $extract = Join-Path $env:RUNNER_TEMP "ffmpeg"
+          Expand-Archive -Path $archive -DestinationPath $extract -Force
+          $ffmpeg = Get-ChildItem -Path $extract -Filter "ffmpeg.exe" -Recurse | Select-Object -First 1
+          $ffprobe = Get-ChildItem -Path $extract -Filter "ffprobe.exe" -Recurse | Select-Object -First 1
+          if (-not $ffmpeg -or -not $ffprobe) { throw "FFmpeg/FFprobe executables were not found in the downloaded archive." }
+          $target = Join-Path $PWD "publish/ffmpeg/bin"
+          New-Item -ItemType Directory -Path $target -Force | Out-Null
+          Copy-Item $ffmpeg.FullName $target
+          Copy-Item $ffprobe.FullName $target
+          Get-ChildItem -Path $extract -File -Include "*.txt","*.md","COPYING*" -Recurse | Copy-Item -Destination (Join-Path $PWD "publish/ffmpeg") -Force
+
+      - name: Package Windows ZIP
+        shell: pwsh
+        run: Compress-Archive -Path ./publish/* -DestinationPath ./MusicPlayer-win-x64.zip -CompressionLevel Optimal
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MusicPlayer-win-x64
+          path: MusicPlayer-win-x64.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: MusicPlayer ${{ github.ref_name }}
+          generate_release_notes: true
+          prerelease: true
+          files: MusicPlayer-win-x64.zip
