@@ -32,7 +32,7 @@ jobs:
         shell: pwsh
         run: |
           $archive = Join-Path $env:RUNNER_TEMP "ffmpeg.zip"
-          Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-win64-lgpl.zip" -OutFile $archive
+          Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-win64-lgpl-9.0.zip" -OutFile $archive
           $extract = Join-Path $env:RUNNER_TEMP "ffmpeg"
           Expand-Archive -Path $archive -DestinationPath $extract -Force
           $ffmpeg = Get-ChildItem -Path $extract -Filter "ffmpeg.exe" -Recurse | Select-Object -First 1
@@ -43,6 +43,7 @@ jobs:
           Copy-Item $ffmpeg.FullName $target
           Copy-Item $ffprobe.FullName $target
           Get-ChildItem -Path $extract -File -Include "*.txt","*.md","COPYING*" -Recurse | Copy-Item -Destination (Join-Path $PWD "publish/ffmpeg") -Force
+          Copy-Item ./THIRD-PARTY-NOTICES.md ./publish/THIRD-PARTY-NOTICES.md
 
       - name: Package Windows ZIP
         shell: pwsh
