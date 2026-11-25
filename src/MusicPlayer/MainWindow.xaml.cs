@@ -290,7 +290,7 @@ public partial class MainWindow : Window
     {
         var media = _selectedMedia ?? CurrentPlaylist?.Items.FirstOrDefault();
         if (media is null) return;
-        if (_currentMedia == media && _audio.Position > TimeSpan.Zero && !_audio.IsPlaying)
+        if (_currentMedia == media && _audio.IsPaused)
             _audio.Resume();
         else
             StartPlayback(media);
